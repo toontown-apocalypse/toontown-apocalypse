@@ -1,28 +1,44 @@
-class Launcher 
-    def __init__(self):
-        if TESTING_NF:
-            print ('Starting ToonClash Online launcher!')
+from toontown.toonbase import "ToontownGlobals.py"
+from toontown.toonbase import "ToontownLoader.py"
+from otp.otpbase import OTPBase, "OTPGlobals.py"
+from otp.nametag.ChatBalloon import "ChatBalloon.py"
+from otp.nametag import NametagGlobals "NametagGlobals.py"
+from otp.margins.MarginManager import "MarginManager.py"
+from toontown.toonbase import TTLocalizer, "ToontownBattleGlobals.py"
+tempdir = tempfile.mkdtemp()
+vfs = VirtualFileSystem.getGlobalPtr()
+searchPath = DSearchPath()
+if __debug__:
+    searchPath.appendDirectory(Filename('resources/phase_3/etc'))
+searchPath.appendDirectory(Filename('/phase_3/etc'))
+
+for filename in ['toonmono.cur', 'icon.ico']:
+    p3filename = Filename(filename)
+    found = vfs.resolveFilename(p3filename, searchPath)
+    if not found:
+        continue
+    with open(os.path.join(tempdir, filename), 'wb') as f:
+        f.write(vfs.readFile(p3filename, False))
+loadPrcFileData('Window: icon', 'icon-filename %s' % Filename.fromOsSpecific(os.path.join(tempdir, 'icon.ico')))
+
 class ToonBase(OTPBase.OTPBase):
     notify = DirectNotifyGlobal.directNotify.newCategory('ToonBase')
 
     def __init__(self):
-        self.display = DisplayOptions()
         OTPBase.OTPBase.__init__(self)
-        base.enableMusic(self.display.settings.getBool('game', 'music', True))
-        base.enableSoundEffects(self.display.settings.getBool('game', 'sfx', True))
         self.disableShowbaseMouse()
         self.addCullBins()
-        base.debugRunningMultiplier /= OTPGlobals.ToonSpeedFactor
+        self.debugRunningMultiplier /= OTPGlobals.ToonSpeedFactor
+        self.lightspeed =   3.00 * 10 ** 8
         self.baseXpMultiplier = self.config.GetFloat('base-xp-multiplier', 1.0)
         self.toonChatSounds = self.config.GetBool('toon-chat-sounds', 1)
-        self.placeBeforeObjects = config.GetBool('place-before-objects', 1)
+        self.placeBeforeObjects = self.config.GetBool('place-before-objects', 1)
         self.endlessQuietZone = False
         self.wantDynamicShadows = 0
         self.exitErrorCode = 0
         camera.setPosHpr(0, 0, 0, 0, 0, 0)
-        self.camLens.setFov(ToontownGlobals.DefaultCameraFov)
+        self.camLens.setMinFov(settings['fov']/(4./3.))
         self.camLens.setNearFar(ToontownGlobals.DefaultCameraNear, ToontownGlobals.DefaultCameraFar)
-        self.cam2d.node().setCameraMask(BitMask32.bit(1))
         self.musicManager.setVolume(0.65)
         self.setBackgroundColor(ToontownGlobals.DefaultBackgroundColor)
         tpm = TextPropertiesManager.getGlobalPtr()
@@ -34,11 +50,7 @@ class ToonBase(OTPBase.OTPBase):
         tpm.setProperties('candidate_inactive', candidateInactive)
         self.transitions.IrisModelName = 'phase_3/models/misc/iris'
         self.transitions.FadeModelName = 'phase_3/models/misc/fade'
-        self.snapshotSfx = base.loadSfx('phase_4/audio/sfx/Photo_shutter.ogg')
-        self.flashTrack = None
         self.exitFunc = self.userExit
-        if __builtins__.has_key('launcher') and launcher:
-            launcher.setPandaErrorCode(11)
         globalClock.setMaxDt(0.2)
         if self.config.GetBool('want-particles', 1) == 1:
             self.notify.debug('Enabling particles')
@@ -56,18 +68,20 @@ class ToonBase(OTPBase.OTPBase):
             self.accept(ToontownGlobals.MinimizeGameHotKeyRepeatOSX, self.minimizeGame)
 
         self.accept('f3', self.toggleGui)
+        self.accept('f4', self.oobe)
         self.accept('panda3d-render-error', self.panda3dRenderError)
         oldLoader = self.loader
         self.loader = ToontownLoader.ToontownLoader(self)
         __builtins__['loader'] = self.loader
         oldLoader.destroy()
+        self.preloader = Preloader()
+        __builtins__['preloader'] = self.preloader
         self.accept('PandaPaused', self.disableAllAudio)
         self.accept('PandaRestarted', self.enableAllAudio)
-        self.friendMode = self.config.GetBool('switchboard-friends', 0)
         self.wantPets = self.config.GetBool('want-pets', 1)
         self.wantBingo = self.config.GetBool('want-fish-bingo', 1)
         self.wantKarts = self.config.GetBool('want-karts', 1)
-        self.wantNewSpecies = self.config.GetBool('want-new-species', 0)
+        self.wantGroupTracker = self.config.GetBool('want-grouptracker', 0)
         self.inactivityTimeout = self.config.GetFloat('inactivity-timeout', ToontownGlobals.KeyboardTimeout)
         if self.inactivityTimeout:
             self.notify.debug('Enabling Panda timeout: %s' % self.inactivityTimeout)
@@ -95,31 +109,33 @@ class ToonBase(OTPBase.OTPBase):
         if cogdoGameSafezoneId != -1:
             self.cogdoGameSafezoneId = cogdoGameSafezoneId
         ToontownBattleGlobals.SkipMovie = self.config.GetBool('skip-battle-movies', 0)
-        self.creditCardUpFront = self.config.GetInt('credit-card-up-front', -1)
-        if self.creditCardUpFront == -1:
-            del self.creditCardUpFront
-        else:
-            self.creditCardUpFront = self.creditCardUpFront != 0
         self.housingEnabled = self.config.GetBool('want-housing', 1)
         self.cannonsEnabled = self.config.GetBool('estate-cannons', 0)
         self.fireworksEnabled = self.config.GetBool('estate-fireworks', 0)
         self.dayNightEnabled = self.config.GetBool('estate-day-night', 0)
         self.cloudPlatformsEnabled = self.config.GetBool('estate-clouds', 0)
         self.greySpacing = self.config.GetBool('allow-greyspacing', 0)
-        self.goonsEnabled = self.config.GetBool('estate-goon', 0)
-        self.restrictTrialers = self.config.GetBool('restrict-trialers', 1)
-        self.roamingTrialers = self.config.GetBool('roaming-trialers', 1)
         self.slowQuietZone = self.config.GetBool('slow-quiet-zone', 0)
         self.slowQuietZoneDelay = self.config.GetFloat('slow-quiet-zone-delay', 5)
         self.killInterestResponse = self.config.GetBool('kill-interest-response', 0)
-        self.forceSkipTutorial = self.config.GetBool('force-skip-tutorial', 0)
+        
+        # group tracker prefs
+        print('setting group tracker setting')
+        if 'grouptracker' in settings:
+            self.showGroupTracker = settings.get('grouptracker', False)
+        else:
+            self.showGroupTracker = True
+        
+        settings['grouptracker'] = self.showGroupTracker
+        print('Group Tracker Settings:', self.showGroupTracker)
+
         tpMgr = TextPropertiesManager.getGlobalPtr()
         WLDisplay = TextProperties()
         WLDisplay.setSlant(0.3)
-        WLEnter = TextProperties()
-        WLEnter.setTextColor(1.0, 0.0, 0.0, 1)
         tpMgr.setProperties('WLDisplay', WLDisplay)
-        tpMgr.setProperties('WLEnter', WLEnter)
+        WLRed = tpMgr.getProperties('red')
+        WLRed.setTextColor(1.0, 0.0, 0.0, 1)
+        tpMgr.setProperties('WLRed', WLRed)
         del tpMgr
         self.lastScreenShotTime = globalClock.getRealTime()
         self.accept('InputState-forward', self.__walking)
@@ -130,9 +146,15 @@ class ToonBase(OTPBase.OTPBase):
         self.oldY = max(1, base.win.getYSize())
         self.aspectRatio = float(self.oldX) / self.oldY
         self.localAvatarStyle = None
-		# WASD option :D
-        self.wantWASD = self.display.settings.getBool('game', 'want-WASD', False)
-        
+
+        self.filters = CommonFilters(self.win, self.cam)
+        self.wantCogInterface = settings.get('cogInterface', True)
+        self.wantantialiasing = settings.get('antialiasing', 1)
+
+	self.wantWASD = settings.get('want-WASD', False)
+	self.wantNews = settings.get('want-News', True)
+
+       
         self.Move_Up = 'arrow_up'
         self.Move_Left = 'arrow_left'       
         self.Move_Down = 'arrow_down'
